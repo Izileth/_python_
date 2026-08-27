@@ -1,0 +1,14 @@
+{
+    "kira": {
+        "salt": "2317d1b6ed76f87be0f15058508c83ca",
+        "hash": "5d6c3b6d5d79a534e55517ad0c117301dfed5b8e814a6c4031c63fd53997a499"
+    },
+    "ana": {
+        "salt": "ed52a496c9b09566def84f9360b7672e",
+        "hash": "80cab0d6d86b9de1d4e238fbc1cbafbac29310d4e7c8e886245645deb1b5d883"
+    },
+    "kin": {
+        "salt": "1f3651d4080e5a87159e5c307c49eb47",
+        "hash": "eba75c3e18c3a51cca42e28a156f06b1554dff19092da0625b0e538862447fef"
+    }
+}
