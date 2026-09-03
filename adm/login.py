@@ -2,7 +2,7 @@
 import json
 import os
 
-ARCHIVE = "database@2.json"
+ARCHIVE = "database_adm.json"
 
 # Carrega os dados
 if os.path.exists(ARCHIVE):
