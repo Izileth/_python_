@@ -1,12 +1,13 @@
+import asyncio
 import io
 import os
 import ccxt
+from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import pandas as pd
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
-import asyncio
 
 # 1. Carrega variáveis de ambiente
 load_dotenv()
@@ -19,7 +20,6 @@ exchange = ccxt.binance(
     }
 )
 
-# Lista padrão de criptomoedas suportadas/monitoradas
 CRIPTOS_DISPONIVEIS = [
     "BTC/USDT",
     "ETH/USDT",
@@ -30,7 +30,6 @@ CRIPTOS_DISPONIVEIS = [
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando de boas-vindas personalizado com o nome do usuário"""
     usuario = update.effective_user
     nome = usuario.first_name if usuario.first_name else "Investidor"
 
@@ -45,7 +44,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def listar_criptos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Lista as criptomoedas configuradas"""
     texto = "📋 *Pares disponíveis para consulta:*\n" + "\n".join(
         [f"• `{c}`" for c in CRIPTOS_DISPONIVEIS]
     )
@@ -53,7 +51,6 @@ async def listar_criptos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def obter_preco(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Consulta o preço atual de uma criptomoeda passada como argumento"""
     if not context.args:
         await update.message.reply_text(
             "⚠️ Por favor, informe o par. Exemplo: `/preco BTC/USDT`",
@@ -64,7 +61,7 @@ async def obter_preco(update: Update, context: ContextTypes.DEFAULT_TYPE):
     simbolo = context.args[0].upper()
 
     try:
-        ticker = exchange.fetch_ticker(simbolo)
+        ticker = await asyncio.to_thread(exchange.fetch_ticker, simbolo)
         preco = ticker["last"]
         variacao = ticker["percentage"]
 
@@ -79,13 +76,89 @@ async def obter_preco(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         await update.message.reply_text(
-            f"❌ Erro ao buscar o ativo `{simbolo}`. Verifique se o par está correto (ex: BTC/USDT).",
+            f"❌ Erro ao buscar o ativo `{simbolo}`. Verifique o par informado.",
             parse_mode="Markdown",
         )
 
 
+def _gerar_imagem_candlestick(ohlcv) -> io.BytesIO:
+    """Função síncrona isolada para renderização única do gráfico em memória."""
+    df = pd.DataFrame(
+        ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"]
+    )
+
+    up = df[df["close"] >= df["open"]]
+    down = df[df["close"] < df["open"]]
+
+    # Instancia figura de forma isolada sem reaproveitar o estado global do pyplot
+    fig = Figure(figsize=(10, 5), facecolor="#0e0e0e")
+    ax = fig.add_subplot(111)
+    ax.set_facecolor("#0e0e0e")
+
+    width = 0.6
+
+    # Velas de Alta (Brancas)
+    ax.vlines(
+        up.index, up["low"], up["high"], color="#ffffff", linewidth=1, zorder=1
+    )
+    ax.bar(
+        up.index,
+        up["close"] - up["open"],
+        width,
+        bottom=up["open"],
+        color="#ffffff",
+        edgecolor="#ffffff",
+        zorder=2,
+    )
+
+    # Velas de Baixa (Vermelho)
+    ax.vlines(
+        down.index,
+        down["low"],
+        down["high"],
+        color="#ff334b",
+        linewidth=1,
+        zorder=1,
+    )
+    ax.bar(
+        down.index,
+        down["open"] - down["close"],
+        width,
+        bottom=down["close"],
+        color="#ff334b",
+        edgecolor="#ff334b",
+        zorder=2,
+    )
+
+    # Ajustes estéticos
+    ax.yaxis.tick_right()
+    ax.yaxis.set_label_position("right")
+    ax.tick_params(colors="#888888", labelsize=9)
+    ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.15, color="#ffffff")
+
+    for spine in ["top", "left", "bottom", "right"]:
+        ax.spines[spine].set_visible(False)
+
+    ax.set_xticks([])
+    ax.set_xlim(-1, len(df))
+
+    fig.tight_layout()
+
+    # Salva no buffer de memória RAM
+    buf = io.BytesIO()
+    fig.savefig(
+        buf, format="png", dpi=100, bbox_inches="tight", facecolor="#0e0e0e"
+    )
+    buf.seek(0)
+
+    # Limpa explicitamente o pyplot global para zerar o acumulador de memória
+    plt.clf()
+    plt.close("all")
+
+    return buf
+
+
 async def gerar_grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gera um gráfico estilo Candlestick Dark usando exclusivamente Matplotlib"""
     if not context.args:
         await update.message.reply_text(
             "⚠️ Por favor, informe o par. Exemplo: `/grafico ETH/USDT`",
@@ -95,124 +168,50 @@ async def gerar_grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     simbolo = context.args[0].upper()
 
-    await update.message.reply_text(
+    status_msg = await update.message.reply_text(
         f"⏳ Processando dados e gerando gráfico para `{simbolo}`...",
         parse_mode="Markdown",
     )
 
     try:
-        # 1. Puxa histórico de velas (ex: 80 velas de 1h para dar volume similar à foto)
-        ohlcv = exchange.fetch_ohlcv(simbolo, timeframe="1h", limit=80)
-
-        # 2. Converte os dados recebidos em um DataFrame
-        df = pd.DataFrame(
-            ohlcv,
-            columns=["timestamp", "open", "high", "low", "close", "volume"],
+        # Busca os dados OHLCV na thread pool
+        ohlcv = await asyncio.to_thread(
+            exchange.fetch_ohlcv, simbolo, timeframe="1h", limit=80
         )
 
-        # 3. Separa as velas de alta (close >= open) e velas de baixa (close < open)
-        up = df[df["close"] >= df["open"]]
-        down = df[df["close"] < df["open"]]
+        # Gera o gráfico na thread pool com o isolamento de figura
+        buf = await asyncio.to_thread(_gerar_imagem_candlestick, ohlcv)
 
-        # 4. Configura a janela com tema escuro (#0e0e0e)
-        fig, ax = plt.subplots(figsize=(10, 5))
-        fig.patch.set_facecolor("#0e0e0e")
-        ax.set_facecolor("#0e0e0e")
-
-        width = 0.6  # Largura do corpo do candle
-
-        # Desenha velas de Alta (Brancas)
-        ax.vlines(
-            up.index,
-            up["low"],
-            up["high"],
-            color="#ffffff",
-            linewidth=1,
-            zorder=1,
-        )
-        ax.bar(
-            up.index,
-            up["close"] - up["open"],
-            width,
-            bottom=up["open"],
-            color="#ffffff",
-            edgecolor="#ffffff",
-            zorder=2,
-        )
-
-        # Desenha velas de Baixa (Vermelho vivo)
-        ax.vlines(
-            down.index,
-            down["low"],
-            down["high"],
-            color="#ff334b",
-            linewidth=1,
-            zorder=1,
-        )
-        ax.bar(
-            down.index,
-            down["open"] - down["close"],
-            width,
-            bottom=down["close"],
-            color="#ff334b",
-            edgecolor="#ff334b",
-            zorder=2,
-        )
-
-        # 5. Formatação do Eixo e Grade conforme a imagem
-        ax.yaxis.tick_right()  # Move escala de preços para a direita
-        ax.yaxis.set_label_position("right")
-        ax.tick_params(colors="#888888", labelsize=9)
-
-        # Linhas pontilhadas bem suaves para a grade
-        ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.15, color="#ffffff")
-
-        # Oculta bordas da moldura do gráfico
-        for spine in ["top", "left", "bottom", "right"]:
-            ax.spines[spine].set_visible(False)
-
-        # Oculta marcadores do eixo X para manter visual limpo
-        ax.set_xticks([])
-        ax.set_xlim(-1, len(df))
-
-        plt.tight_layout()
-
-        # 6. Salva a imagem gerada no Buffer de Memória RAM
-        buf = io.BytesIO()
-        plt.savefig(
-            buf,
-            format="png",
-            dpi=120,
-            bbox_inches="tight",
-            facecolor=fig.get_facecolor(),
-        )
-        buf.seek(0)
-        plt.close(fig)
-
-        # 7. Envia a imagem gerada de volta ao usuário do Telegram
+        # Envia uma única foto
         await update.message.reply_photo(
             photo=buf,
             caption=f"📈 Gráfico *{simbolo}* gerado com sucesso.",
             parse_mode="Markdown",
         )
 
+        await status_msg.delete()
+
     except Exception as e:
         await update.message.reply_text(
-            f"❌ Não foi possível gerar o gráfico para `{simbolo}`. Erro: {str(e)}",
-            parse_mode="Markdown",
+            f"❌ Erro ao gerar o gráfico: {str(e)}", parse_mode="Markdown"
         )
 
 
 def main():
-    """Inicializa o Bot"""
     if not TELEGRAM_TOKEN:
         print("Erro: TELEGRAM_TOKEN não configurado no arquivo .env")
         return
 
-    # Constrói a aplicação do bot
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    # Ajusta os timeouts de leitura/escrita da API do Telegram para evitar duplicatas por retry
+    application = (
+        Application.builder()
+        .token(TELEGRAM_TOKEN)
+        .read_timeout(30)
+        .write_timeout(30)
+        .connect_timeout(30)
+        .build()
+    )
 
-    # Registra os manipuladores de comandos
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("lista", listar_criptos))
     application.add_handler(CommandHandler("preco", obter_preco))
@@ -221,7 +220,6 @@ def main():
     print(
         "🤖 Bot multi-ativo iniciado com sucesso! Pressione Ctrl+C para parar."
     )
-    # Inicia o loop de escuta do bot (Polling)
     application.run_polling()
 
 
