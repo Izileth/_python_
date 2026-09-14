@@ -1,57 +1,56 @@
+import os
+import io
 import time
-import requests
+import ccxt
+import pandas as pd
+import matplotlib.pyplot as plt
+from dotenv import load_dotenv
+from telegram import Bot
+import asyncio
 
-# Lista de pares de criptomoedas que você deseja monitorar
-# O formato segue o padrão da API da Binance (ex: BTCUSDT, ETHUSDT, SOLUSDT)
-CRIPTOS_PARA_MONITORAR = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"]
+# Carrega variáveis de ambiente do arquivo .env
+load_dotenv()
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Intervalo de tempo entre as verificações (em segundos)
-INTERVALO_SEGUNDOS = 60
+# Inicializa a exchange via CCXT (ex: Binance)
+exchange = ccxt.binance({
+    'enableRateLimit': True,
+})
 
-def obter_precos(simbolos):
-    """Busca o preço atual de múltiplos símbolos na API pública da Binance."""
-    url = "https://api.binance.com/api/v3/ticker/price"
+async def enviar_grafico_telegram(simbolo):
+    # 1. Puxa dados históricos (últimas 24 horas em velas de 1 hora)
+    ohlcv = exchange.fetch_ohlcv(simbolo, timeframe='1h', limit=24)
     
-    try:
-        # A Binance permite buscar todos os preços de uma vez ou por símbolo
-        resposta = requests.get(url, timeout=10)
-        resposta.raise_for_status()
-        dados = resposta.json()
-        
-        # Filtra apenas os preços dos ativos que estão na nossa lista
-        precos = {item['symbol']: float(item['price']) for item in dados if item['symbol'] in simbolos}
-        return precos
-    except requests.exceptions.RequestException as e:
-        print(f"Erro ao conectar com a API: {e}")
-        return None
-
-def monitorar_mercado():
-    print("Iniciando monitoramento de criptomoedas...\n")
+    # 2. Transforma em DataFrame do Pandas
+    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     
-    # Dicionário opcional para registrar o último preço e calcular variações simples
-    precos_anteriores = {}
+    # Calcula uma Média Móvel Simples (SMA) de 6 períodos
+    df['SMA6'] = df['close'].rolling(window=6).mean()
 
-    while True:
-        print(f"--- Verificação: {time.strftime('%Y-%m-%d %H:%M:%S')} ---")
-        precos_atuais = obter_precos(CRIPTOS_PARA_MONITORAR)
-        
-        if precos_atuais:
-            for simbolo, preco in precos_atuais.items():
-                # Exemplo simples de lógica por ativo
-                variacao_texto = ""
-                if simbolo in precos_anteriores:
-                    anterior = precos_anteriores[simbolo]
-                    dif = preco - anterior
-                    if dif > 0:
-                        variacao_texto = f"( subiram +{dif:.2f} )"
-                    elif dif < 0:
-                        variacao_texto = f"( caíram {dif:.2f} )"
-                
-                print(f"{simbolo}: ${preco:,.2f} {variacao_texto}")
-                precos_anteriores[simbolo] = preco
-        
-        print(f"\nAguardando {INTERVALO_SEGUNDOS} segundos para a próxima verificação...\n")
-        time.sleep(INTERVALO_SEGUNDOS)
+    # 3. Gera o gráfico com Matplotlib
+    plt.figure(figsize=(10, 5))
+    plt.plot(df['timestamp'], df['close'], label=f'Preço {simbolo}', color='blue', marker='o')
+    plt.plot(df['timestamp'], df['SMA6'], label='SMA 6h', color='orange', linestyle='--')
+    plt.title(f'Monitoramento Técnico - {simbolo}')
+    plt.xlabel('Horário (UTC)')
+    plt.ylabel('Preço (USDT)')
+    plt.legend()
+    plt.grid(True)
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+
+    # Salva o gráfico em um buffer de memória (sem precisar salvar arquivo no disco)
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    plt.close()
+
+    # 4. Envia a imagem pelo Telegram
+    bot = Bot(token=TELEGRAM_TOKEN)
+    await bot.send_photo(chat_id=TELEGRAM_CHAT_ID, photo=buf, caption=f"Relatório gráfico gerado para {simbolo}")
 
 if __name__ == "__main__":
-    monitorar_mercado()
+    # Exemplo de execução assíncrona para o par BTC/USDT
+    asyncio.run(enviar_grafico_telegram("BTC/USDT"))
