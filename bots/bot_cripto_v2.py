@@ -2,7 +2,6 @@ import asyncio
 import io
 import os
 import ccxt
-from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import pandas as pd
 from dotenv import load_dotenv
@@ -81,77 +80,131 @@ async def obter_preco(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-def _gerar_imagem_candlestick(ohlcv) -> io.BytesIO:
-    """Função síncrona isolada para renderização única do gráfico em memória."""
-    df = pd.DataFrame(
-        ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"]
-    )
+def _gerar_grafico_completo_buffer(df: pd.DataFrame) -> io.BytesIO:
+    """Gera o gráfico estilizado com tag de preço e médias móveis diretamente em memória RAM."""
+    if len(df) < 21:
+        return None
 
-    up = df[df["close"] >= df["open"]]
-    down = df[df["close"] < df["open"]]
+    df_plot = df.tail(60).copy()
+    df_plot["DataHora"] = pd.to_datetime(df_plot["DataHora"])
+    df_plot = df_plot.reset_index(drop=True)
 
-    # Instancia figura de forma isolada sem reaproveitar o estado global do pyplot
-    fig = Figure(figsize=(10, 5), facecolor="#0e0e0e")
-    ax = fig.add_subplot(111)
-    ax.set_facecolor("#0e0e0e")
+    fig, ax = plt.subplots(figsize=(11, 5.5), dpi=130)
 
-    width = 0.6
+    # Fundo estilo escuro profundo / preto
+    cor_fundo = "#121212"
+    ax.set_facecolor(cor_fundo)
+    fig.patch.set_facecolor(cor_fundo)
 
-    # Velas de Alta (Brancas)
+    # Cores: Alta = Branco | Baixa = Vermelho
+    up = df_plot[df_plot["Close"] >= df_plot["Open"]]
+    down = df_plot[df_plot["Close"] < df_plot["Open"]]
+
+    cor_alta = "#FFFFFF"
+    cor_baixa = "#E53935"
+
+    # Plot dos Pavios
     ax.vlines(
-        up.index, up["low"], up["high"], color="#ffffff", linewidth=1, zorder=1
+        up.index, up["Low"], up["High"], color=cor_alta, linewidth=1.2, zorder=1
     )
-    ax.bar(
-        up.index,
-        up["close"] - up["open"],
-        width,
-        bottom=up["open"],
-        color="#ffffff",
-        edgecolor="#ffffff",
-        zorder=2,
-    )
-
-    # Velas de Baixa (Vermelho)
     ax.vlines(
         down.index,
-        down["low"],
-        down["high"],
-        color="#ff334b",
-        linewidth=1,
+        down["Low"],
+        down["High"],
+        color=cor_baixa,
+        linewidth=1.2,
         zorder=1,
     )
+
+    # Plot dos Corpos das Velas
+    largura = 0.6
+    ax.bar(
+        up.index,
+        up["Close"] - up["Open"],
+        largura,
+        bottom=up["Open"],
+        color=cor_alta,
+        edgecolor=cor_alta,
+        zorder=2,
+    )
     ax.bar(
         down.index,
-        down["open"] - down["close"],
-        width,
-        bottom=down["close"],
-        color="#ff334b",
-        edgecolor="#ff334b",
+        down["Open"] - down["Close"],
+        largura,
+        bottom=down["Close"],
+        color=cor_baixa,
+        edgecolor=cor_baixa,
         zorder=2,
     )
 
-    # Ajustes estéticos
+    # Médias Móveis (se calculadas no DataFrame)
+    if "SMA_9" in df_plot.columns and "SMA_21" in df_plot.columns:
+        ax.plot(
+            df_plot.index,
+            df_plot["SMA_9"],
+            color="#2962FF",
+            linewidth=1.2,
+            alpha=0.7,
+            label="SMA 9",
+        )
+        ax.plot(
+            df_plot.index,
+            df_plot["SMA_21"],
+            color="#FF6D00",
+            linewidth=1.2,
+            alpha=0.7,
+            label="SMA 21",
+        )
+
+    # Linha do Preço Atual (Último Fechamento)
+    ultimo_preco = df_plot["Close"].iloc[-1]
+    ax.axhline(y=ultimo_preco, color="#E53935", linestyle=":", linewidth=1.2)
+
+    # Tag de preço no eixo Y
+    ax.text(
+        len(df_plot) - 0.5,
+        ultimo_preco,
+        f"  {ultimo_preco:,.2f}",
+        color="white",
+        backgroundcolor="#E53935",
+        fontsize=8,
+        verticalalignment="center",
+        fontweight="bold",
+    )
+
+    # Configuração dos Eixos (Preços à Direita)
     ax.yaxis.tick_right()
     ax.yaxis.set_label_position("right")
-    ax.tick_params(colors="#888888", labelsize=9)
-    ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.15, color="#ffffff")
+    ax.tick_params(axis="both", colors="#888888", labelsize=8.5, length=0)
 
-    for spine in ["top", "left", "bottom", "right"]:
-        ax.spines[spine].set_visible(False)
+    # Formatação do Eixo X (Datas)
+    passo = max(1, len(df_plot) // 6)
+    ticks_x = range(0, len(df_plot), passo)
+    labels_x = [df_plot["DataHora"].iloc[i].strftime("%H:%M") for i in ticks_x]
+    ax.set_xticks(ticks_x)
+    ax.set_xticklabels(labels_x)
+    ax.set_xlim(-1, len(df_plot))
 
-    ax.set_xticks([])
-    ax.set_xlim(-1, len(df))
+    # Grade minimalista
+    ax.grid(True, linestyle=":", alpha=0.15, color="white")
 
-    fig.tight_layout()
+    # Bordas invisíveis
+    for spine in ax.spines.values():
+        spine.set_visible(False)
 
-    # Salva no buffer de memória RAM
+    plt.tight_layout()
+
+    # Salva diretamente na RAM e limpa o estado global do Pyplot
     buf = io.BytesIO()
-    fig.savefig(
-        buf, format="png", dpi=100, bbox_inches="tight", facecolor="#0e0e0e"
+    plt.savefig(
+        buf,
+        format="png",
+        facecolor=fig.get_facecolor(),
+        bbox_inches="tight",
+        dpi=130,
     )
     buf.seek(0)
 
-    # Limpa explicitamente o pyplot global para zerar o acumulador de memória
     plt.clf()
     plt.close("all")
 
@@ -174,21 +227,35 @@ async def gerar_grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     try:
-        # Busca os dados OHLCV na thread pool
+        # 1. Puxa os dados OHLCV na thread separada (80 velas de 15 minutos)
         ohlcv = await asyncio.to_thread(
-            exchange.fetch_ohlcv, simbolo, timeframe="1h", limit=80
+            exchange.fetch_ohlcv, simbolo, timeframe="15m", limit=80
         )
 
-        # Gera o gráfico na thread pool com o isolamento de figura
-        buf = await asyncio.to_thread(_gerar_imagem_candlestick, ohlcv)
+        # 2. Prepara o DataFrame adequando as colunas exigidas pela sua função
+        df = pd.DataFrame(
+            ohlcv,
+            columns=["DataHora", "Open", "High", "Low", "Close", "Volume"],
+        )
+        df["DataHora"] = pd.to_datetime(df["DataHora"], unit="ms")
 
-        # Envia uma única foto
+        # 3. Calcula as Médias Móveis (opcional)
+        df["SMA_9"] = df["Close"].rolling(window=9).mean()
+        df["SMA_21"] = df["Close"].rolling(window=21).mean()
+
+        # 4. Renderiza a imagem em thread separada
+        buf = await asyncio.to_thread(_gerar_grafico_completo_buffer, df)
+
+        if buf is None:
+            await update.message.reply_text("❌ Dados insuficientes.")
+            return
+
+        # 5. Envia ao Telegram e remove a mensagem temporária
         await update.message.reply_photo(
             photo=buf,
-            caption=f"📈 Gráfico *{simbolo}* gerado com sucesso.",
+            caption=f"📈 Gráfico *{simbolo}* (15m) gerado com sucesso.",
             parse_mode="Markdown",
         )
-
         await status_msg.delete()
 
     except Exception as e:
@@ -202,7 +269,6 @@ def main():
         print("Erro: TELEGRAM_TOKEN não configurado no arquivo .env")
         return
 
-    # Ajusta os timeouts de leitura/escrita da API do Telegram para evitar duplicatas por retry
     application = (
         Application.builder()
         .token(TELEGRAM_TOKEN)
