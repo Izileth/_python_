@@ -2,6 +2,9 @@ import asyncio
 import io
 import os
 from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from threading import Thread
+
 import ccxt
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -13,7 +16,10 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-exchange = ccxt.binance({"enableRateLimit": True})
+# Substituímos a Binance pela KuCoin ou MEXC pois a Binance bloqueia IPs
+# de serviços de hospedagem gratuitos (como Render, Replit, Heroku, etc).
+# A KuCoin fornece os mesmos dados sem essas restrições rigorosas de proxy/IP.
+exchange = ccxt.kucoin({"enableRateLimit": True})
 
 CRIPTOS_DISPONIVEIS = [
     "BTC/USDT",
@@ -303,6 +309,24 @@ async def gerar_grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+# --- SERVIDOR WEB (KEEP-ALIVE) ---
+class KeepAliveHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"Bot is alive and running!")
+
+def run_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), KeepAliveHandler)
+    server.serve_forever()
+
+def keep_alive():
+    t = Thread(target=run_server, daemon=True)
+    t.start()
+# ---------------------------------
+
 def main():
     if not TELEGRAM_TOKEN:
         print("Erro: TELEGRAM_TOKEN não configurado no arquivo .env")
@@ -321,6 +345,9 @@ def main():
     application.add_handler(CommandHandler("lista", listar_criptos))
     application.add_handler(CommandHandler("preco", obter_preco))
     application.add_handler(CommandHandler("grafico", gerar_grafico))
+
+    print("🌐 Iniciando servidor web de keep-alive...")
+    keep_alive()
 
     print("🤖 Bot multi-ativo iniciado com sucesso! Pressione Ctrl+C para parar.")
     application.run_polling()
