@@ -304,7 +304,7 @@ async def gerar_grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.delete()
         await update.message.reply_text(
             f"❌ *Erro ao gerar o gráfico.*\n\n"
-            f"Verifique se o par `{simbolo}` é válido na Binance.",
+            f"Verifique se o par `{simbolo}` é válido na corretora.",
             parse_mode="Markdown",
         )
 
