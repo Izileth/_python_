@@ -29,29 +29,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nome = usuario.first_name if usuario.first_name else "Investidor"
 
     mensagem = (
-        f"⚡ *CRIPTO BOT PRO* ⚡\n"
-        f"───────────────────────\n"
         f"Olá, *{nome}*! Bem-vindo ao seu painel de monitoramento de ativos em tempo real.\n\n"
         f"📌 *COMANDOS DISPONÍVEIS*\n\n"
         f"📋 `/lista` \n└ Lista todos os pares configurados\n\n"
         f"💵 `/preco <PAR>` \n└ Cotação atualizada + variação 24h\n"
         f"  _Exemplo:_ `/preco BTC/USDT`\n\n"
         f"📈 `/grafico <PAR>` \n└ Gera o gráfico de velas com SMA 9 e 21\n"
-        f"  _Exemplo:_ `/grafico ETH/USDT`\n"
-        f"───────────────────────\n"
+        f"  _Exemplo:_ `/grafico ETH/USDT`\n\n"
         f"💡 _Dica: Digite o par exatamente como listado._"
     )
     await update.message.reply_text(mensagem, parse_mode="Markdown")
 
 
 async def listar_criptos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    lista_formatada = "\n".join([f"  ▸ `{c}`" for c in CRIPTOS_DISPONIVEIS])
+    lista_formatada = "\n".join([f"💵 `{c}`" for c in CRIPTOS_DISPONIVEIS])
 
     texto = (
-        f"📋 *PARES DISPONÍVEIS*\n"
-        f"───────────────────────\n"
-        f"{lista_formatada}\n"
-        f"───────────────────────\n"
+        f"📋 *PARES DISPONÍVEIS*\n\n"
+        f"{lista_formatada}\n\n"
         f"💬 Use `/preco PAR` ou `/grafico PAR` para consultar."
     )
     await update.message.reply_text(texto, parse_mode="Markdown")
@@ -78,24 +73,22 @@ async def obter_preco(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Visual de Variação
         if variacao >= 0:
-            emoji_var = "🚀"
+            emoji_var = "🟢"
             sinal = "+"
             status_cor = "ALTA"
         else:
-            emoji_var = "🔻"
+            emoji_var = "🔴"
             sinal = ""
             status_cor = "BAIXA"
 
         agora = datetime.now().strftime("%d/%m/%Y às %H:%M:%S")
 
         resposta = (
-            f"💎 *{simbolo}*  •  `{status_cor}`\n"
-            f"───────────────────────\n"
+            f"💎 *{simbolo}*  •  `{status_cor}`\n\n"
             f"💰 *Preço Atual:* `{preco:,.2f} USDT`\n"
             f"{emoji_var} *Variação 24h:* `{sinal}{variacao:.2f}%`\n\n"
             f"📊 *Máxima 24h:* `${high:,.2f}`\n"
-            f"📉 *Mínima 24h:* `${low:,.2f}`\n"
-            f"───────────────────────\n"
+            f"📉 *Mínima 24h:* `${low:,.2f}`\n\n"
             f"⏱ _Atualizado em {agora}_"
         )
         await update.message.reply_text(resposta, parse_mode="Markdown")
@@ -110,7 +103,7 @@ async def obter_preco(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def _gerar_grafico_completo_buffer(df: pd.DataFrame, simbolo: str) -> io.BytesIO:
-    """Gera o gráfico estilizado em Dark Mode avançado."""
+    """Gera o gráfico estilizado com velas brancas/vermelhas e fundo escuro."""
     if len(df) < 21:
         return None
 
@@ -118,27 +111,35 @@ def _gerar_grafico_completo_buffer(df: pd.DataFrame, simbolo: str) -> io.BytesIO
     df_plot["DataHora"] = pd.to_datetime(df_plot["DataHora"])
     df_plot = df_plot.reset_index(drop=True)
 
-    # Estilo do Gráfico
-    plt.style.use("dark_background")
     fig, ax = plt.subplots(figsize=(10, 5), dpi=140)
 
-    cor_fundo = "#0D1117"  # Dark Theme Estilo GitHub/TradingView
+    # Fundo escuro
+    cor_fundo = "#121212"
     ax.set_facecolor(cor_fundo)
     fig.patch.set_facecolor(cor_fundo)
 
-    # Cores Tradicionais de Trading
+    # Cores: Alta = Branco | Baixa = Vermelho
     up = df_plot[df_plot["Close"] >= df_plot["Open"]]
     down = df_plot[df_plot["Close"] < df_plot["Open"]]
 
-    cor_alta = "#00C853"   # Verde Neon
-    cor_baixa = "#FF3D00"  # Vermelho Vivo
+    cor_alta = "#FFFFFF"
+    cor_baixa = "#E53935"
 
     # Plot dos Pavios
-    ax.vlines(up.index, up["Low"], up["High"], color=cor_alta, linewidth=1, zorder=1)
-    ax.vlines(down.index, down["Low"], down["High"], color=cor_baixa, linewidth=1, zorder=1)
+    ax.vlines(
+        up.index, up["Low"], up["High"], color=cor_alta, linewidth=1.2, zorder=1
+    )
+    ax.vlines(
+        down.index,
+        down["Low"],
+        down["High"],
+        color=cor_baixa,
+        linewidth=1.2,
+        zorder=1,
+    )
 
     # Plot dos Corpos das Velas
-    largura = 0.55
+    largura = 0.6
     ax.bar(
         up.index,
         up["Close"] - up["Open"],
@@ -163,62 +164,62 @@ def _gerar_grafico_completo_buffer(df: pd.DataFrame, simbolo: str) -> io.BytesIO
         ax.plot(
             df_plot.index,
             df_plot["SMA_9"],
-            color="#00E5FF",
+            color="#2962FF",
             linewidth=1.2,
-            alpha=0.85,
+            alpha=0.8,
             label="SMA 9",
         )
         ax.plot(
             df_plot.index,
             df_plot["SMA_21"],
-            color="#FFD600",
+            color="#FF6D00",
             linewidth=1.2,
-            alpha=0.85,
+            alpha=0.8,
             label="SMA 21",
         )
 
     # Linha e Tag de Preço Atual
     ultimo_preco = df_plot["Close"].iloc[-1]
-    cor_tag = cor_alta if df_plot["Close"].iloc[-1] >= df_plot["Open"].iloc[-1] else cor_baixa
-    ax.axhline(y=ultimo_preco, color=cor_tag, linestyle="--", linewidth=1, alpha=0.7)
+    ax.axhline(y=ultimo_preco, color="#E53935", linestyle=":", linewidth=1.2)
 
     ax.text(
         len(df_plot) - 0.5,
         ultimo_preco,
-        f"  ${ultimo_preco:,.2f} ",
+        f"  {ultimo_preco:,.2f} ",
         color="white",
-        backgroundcolor=cor_tag,
+        backgroundcolor="#E53935",
         fontsize=8,
         verticalalignment="center",
         fontweight="bold",
     )
 
-    # Ajustes nos Eixos
+    # Configuração dos Eixos (Preços à Direita)
     ax.yaxis.tick_right()
     ax.yaxis.set_label_position("right")
-    ax.tick_params(axis="both", colors="#8B949E", labelsize=8, length=0)
+    ax.tick_params(axis="both", colors="#888888", labelsize=8.5, length=0)
 
-    # Formatação Datas Eixo X
+    # Formatação do Eixo X (Datas)
     passo = max(1, len(df_plot) // 6)
     ticks_x = range(0, len(df_plot), passo)
     labels_x = [df_plot["DataHora"].iloc[i].strftime("%H:%M") for i in ticks_x]
     ax.set_xticks(ticks_x)
     ax.set_xticklabels(labels_x)
-    ax.set_xlim(-1, len(df_plot) + 3)
+    ax.set_xlim(-1, len(df_plot) + 2)
 
     # Título do Gráfico no próprio Canvas
     ax.set_title(
         f"{simbolo} • Timeframe 15m",
         loc="left",
-        color="#F0F6FC",
+        color="#FFFFFF",
         fontsize=11,
         fontweight="bold",
         pad=12,
     )
 
-    ax.legend(loc="upper left", frameon=False, fontsize=8, labelcolor="#8B949E")
-    ax.grid(True, linestyle=":", alpha=0.12, color="#FFFFFF")
+    ax.legend(loc="upper left", frameon=False, fontsize=8, labelcolor="#888888")
+    ax.grid(True, linestyle=":", alpha=0.15, color="white")
 
+    # Bordas invisíveis
     for spine in ax.spines.values():
         spine.set_visible(False)
 
@@ -230,7 +231,7 @@ def _gerar_grafico_completo_buffer(df: pd.DataFrame, simbolo: str) -> io.BytesIO
         format="png",
         facecolor=fig.get_facecolor(),
         bbox_inches="tight",
-        dpi=140,
+        dpi=130,
     )
     buf.seek(0)
 
@@ -279,12 +280,10 @@ async def gerar_grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         caption_text = (
-            f"📈 *ANÁLISE TÉCNICA* • `{simbolo}`\n"
-            f"───────────────────────\n"
+            f"📈 *ANÁLISE TÉCNICA* • `{simbolo}`\n\n"
             f"⏱ *Timeframe:* 15 Minutos\n"
             f"🟦 *SMA 9:* Média Curta\n"
-            f"🟨 *SMA 21:* Média Longa\n"
-            f"───────────────────────\n"
+            f"🟧 *SMA 21:* Média Longa\n\n"
             f"💡 _Gráfico gerado em tempo real._"
         )
 
